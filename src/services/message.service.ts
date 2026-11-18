@@ -1,8 +1,4 @@
-import {
-  Injectable,
-  InternalServerErrorException,
-  Logger,
-} from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 
 @Injectable()
 export class MessageService {
@@ -14,9 +10,8 @@ export class MessageService {
     const instance = process.env.EVOLUTION_INSTANCE;
 
     if (!baseUrl || !apiKey || !instance) {
-      throw new InternalServerErrorException(
-        'Evolution API não configurada',
-      );
+      this.logger.error('Evolution API não configurada');
+      return;
     }
 
     let number = phone.replace(/\D/g, '');
@@ -25,32 +20,36 @@ export class MessageService {
       number = `55${number}`;
     }
 
-    const response = await fetch(
-      `${baseUrl}/message/sendText/${encodeURIComponent(instance)}`,
-      {
-        method: 'POST',
-        headers: {
-          apikey: apiKey,
-          'Content-Type': 'application/json',
+    try {
+      const response = await fetch(
+        `${baseUrl}/message/sendText/${encodeURIComponent(instance)}`,
+        {
+          method: 'POST',
+          headers: {
+            apikey: apiKey,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            number,
+            text: message,
+          }),
+          signal: AbortSignal.timeout(10000),
         },
-        body: JSON.stringify({
-          number,
-          text: message,
-        }),
-        signal: AbortSignal.timeout(10000),
-      },
-    );
-
-    if (!response.ok) {
-      const error = await response.text();
-
-      this.logger.error(
-        `Erro Evolution API (${response.status}): ${error}`,
       );
 
-      throw new Error('Falha ao enviar mensagem WhatsApp');
-    }
+      if (!response.ok) {
+        const error = await response.text();
+        this.logger.error(
+          `Erro Evolution API (${response.status}): ${error}`,
+        );
+        return;
+      }
 
-    return response.json();
+      return await response.json();
+    } catch (error) {
+      const reason =
+        error instanceof Error ? error.message : 'Erro desconhecido';
+      this.logger.error(`Falha ao enviar mensagem WhatsApp: ${reason}`);
+    }
   }
 }

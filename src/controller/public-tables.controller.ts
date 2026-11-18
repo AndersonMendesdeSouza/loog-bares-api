@@ -1,4 +1,4 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, Param, ParseIntPipe } from '@nestjs/common';
 import { TableService } from 'src/services/table.service';
 import { TableOptionResponseDto } from 'src/dtos/response/table-option-response.dto';
 
@@ -9,5 +9,10 @@ export class PublicTablesController {
   @Get('find-all')
   findAll(): Promise<TableOptionResponseDto[]> {
     return this.tableService.findActive();
+  }
+
+  @Get('find-one-number/:number')
+  findOneNumber(@Param('number', ParseIntPipe) number: number) {
+    return this.tableService.findOneNumber(number);
   }
 }

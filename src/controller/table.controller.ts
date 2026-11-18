@@ -18,7 +18,7 @@ import { TableService } from 'src/services/table.service';
 @UseGuards(JwtAuthGuard, AdminGuard)
 @Controller('tables')
 export class TableController {
-  constructor(private readonly tableService: TableService) {}
+  constructor(private readonly tableService: TableService) { }
 
   @Post()
   create(@Body() dto: TableRequestDto): Promise<TableResponseDto> {
@@ -33,6 +33,11 @@ export class TableController {
   @Get(':id')
   findOne(@Param('id', ParseUUIDPipe) id: string): Promise<TableResponseDto> {
     return this.tableService.findOne(id);
+  }
+
+  @Get('find-one-number/:number')
+  findOneNumber(@Param('number', ParseUUIDPipe) number: string): Promise<TableResponseDto> {
+    return this.tableService.findOneNumber(Number(number));
   }
 
   @Put(':id')
