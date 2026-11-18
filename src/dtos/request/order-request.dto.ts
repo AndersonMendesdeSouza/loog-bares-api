@@ -8,6 +8,7 @@ import {
   IsUUID,
   Min,
   ValidateNested,
+  ValidateIf,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { OrderStatusEnum } from 'src/dtos/enums/order-status.enum';
@@ -45,9 +46,13 @@ export class OrderRequestDto {
   @IsEnum(OrderStatusEnum)
   status?: OrderStatusEnum;
 
+  @ValidateIf(
+    (dto: OrderRequestDto, value: unknown) =>
+      !(dto.tableId || dto.mesaId) || (value !== undefined && value !== null),
+  )
   @IsNotEmpty()
   @IsEnum(PaymentMethodEnum)
-  paymentMethod: PaymentMethodEnum;
+  paymentMethod?: PaymentMethodEnum | null;
 
   @IsNotEmpty()
   @IsString()

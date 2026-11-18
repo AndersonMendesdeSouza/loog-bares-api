@@ -21,7 +21,7 @@ export class TableService {
     private readonly repo: Repository<TableEntity>,
     @InjectRepository(TabEntity)
     private readonly tabRepo: Repository<TabEntity>,
-  ) { }
+  ) {}
 
   async create(dto: TableRequestDto): Promise<TableResponseDto> {
     const existing = await this.repo.findOne({ where: { number: dto.number } });
@@ -59,13 +59,13 @@ export class TableService {
     return this.toTableResponse(table);
   }
 
-  async findOneNumber(number: number): Promise<TableResponseDto> {
+  async findOneNumber(number: number): Promise<TableOptionResponseDto> {
     const table = await this.repo.findOne({
-      where: { number: number },
-      relations: { tabs: { orders: true } },
+      where: { number },
+      select: { id: true, number: true, isActive: true },
     });
     if (!table) throw new NotFoundException('Mesa não encontrada');
-    return this.toTableResponse(table);
+    return toResponse(TableOptionResponseDto, table);
   }
 
   async update(id: string, dto: TableRequestDto): Promise<TableResponseDto> {

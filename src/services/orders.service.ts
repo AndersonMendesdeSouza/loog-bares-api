@@ -71,6 +71,10 @@ export class OrdersService {
     const type =
       dto.type ?? (hasTable ? OrderType.DINE_IN : OrderType.DELIVERY);
 
+    if (!hasTable && !dto.paymentMethod) {
+      throw new BadRequestException('Informe a forma de pagamento');
+    }
+
     if (
       !hasTable &&
       !addressId &&
@@ -175,6 +179,7 @@ export class OrdersService {
       addressId: address?.id,
       deliveryAddress: deliveryAddress ?? null,
       userId: user?.id ?? null,
+      paymentMethod: dto.paymentMethod ?? null,
       status: OrderStatusEnum.RECEIVED,
       address,
     });
@@ -248,10 +253,17 @@ export class OrdersService {
       let table: TableEntity | null = null;
       if (dto.type === OrderType.DINE_IN) {
         table = dto.tableId
-          ? await manager.findOne(TableEntity, { where: { id: dto.tableId }, lock: { mode: 'pessimistic_write' } })
-          : await manager.findOne(TableEntity, { where: { number: Number(dto.mesaId) }, lock: { mode: 'pessimistic_write' } });
+          ? await manager.findOne(TableEntity, {
+              where: { id: dto.tableId },
+              lock: { mode: 'pessimistic_write' },
+            })
+          : await manager.findOne(TableEntity, {
+              where: { number: Number(dto.mesaId) },
+              lock: { mode: 'pessimistic_write' },
+            });
         if (!table) throw new NotFoundException('Mesa não encontrada');
-        if (!table.isActive) throw new ConflictException('Esta mesa está inativa');
+        if (!table.isActive)
+          throw new ConflictException('Esta mesa está inativa');
       }
       const items: OrderItem[] = [];
       let subtotalInCents = 0;
@@ -338,7 +350,9 @@ export class OrdersService {
         userId: null,
         mesaId: table ? String(table.number) : null,
         tab,
-        customerName: table ? `Mesa ${table.number}` : dto.customerName?.trim() || 'Retirada no balcão',
+        customerName: table
+          ? `Mesa ${table.number}`
+          : dto.customerName?.trim() || 'Retirada no balcão',
         customerPhone: dto.customerPhone ?? '',
         deliveryAddress: dto.deliveryAddress ?? null,
         paymentMethod: null,
