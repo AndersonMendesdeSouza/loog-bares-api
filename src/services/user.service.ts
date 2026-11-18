@@ -17,6 +17,7 @@ import { LoginResponseDto } from 'src/dtos/response/login-response.dto';
 import { JwtService } from '@nestjs/jwt';
 import { UserRole } from 'src/dtos/enums/user-role.enum';
 import { toResponse } from 'src/utils/transform-response';
+import { JWT_EXPIRES_IN_SECONDS } from 'src/auth/jwt.constants';
 @Injectable()
 export class UserService {
   private readonly logger = new Logger(UserService.name);
@@ -147,7 +148,7 @@ export class UserService {
 
     return toResponse(LoginResponseDto, {
       token,
-      expiresIn: 60,
+      expiresIn: JWT_EXPIRES_IN_SECONDS,
       role: user.role,
       user,
     });

@@ -6,6 +6,7 @@ import { UsersController } from 'src/controller/user.controller';
 import { UserEntity } from 'src/entities/user.entity';
 import { UserService } from 'src/services/user.service';
 import { JwtStrategy } from 'src/auth/ jwt.strategy';
+import { JWT_EXPIRES_IN_SECONDS } from 'src/auth/jwt.constants';
 
 @Module({
   imports: [
@@ -13,7 +14,7 @@ import { JwtStrategy } from 'src/auth/ jwt.strategy';
     PassportModule,
     JwtModule.register({
       secret: process.env.JWT_SECRET || 'jwt_secret_dev',
-      signOptions: { expiresIn: '15d' },
+      signOptions: { expiresIn: JWT_EXPIRES_IN_SECONDS },
     }),
   ],
   controllers: [UsersController],

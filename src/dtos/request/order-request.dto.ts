@@ -2,15 +2,19 @@ import {
   IsEnum,
   IsNotEmpty,
   IsNumber,
+  IsObject,
   IsOptional,
   IsString,
   IsUUID,
   Min,
+  ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { OrderStatusEnum } from 'src/dtos/enums/order-status.enum';
 import { PaymentMethodEnum } from 'src/dtos/enums/payment-method.enum';
 import { OrderItem } from 'src/types/order-Item-type';
+import { OrderType } from '../enums/table-enums';
+import { OrderDeliveryAddressRequestDto } from './order-delivery-address-request.dto';
 
 type OrderHistory = {
   status: OrderStatusEnum;
@@ -25,6 +29,14 @@ export class AlterStatusDto {
 }
 
 export class OrderRequestDto {
+  @IsOptional()
+  @IsUUID()
+  tableId?: string;
+
+  @IsOptional()
+  @IsEnum(OrderType)
+  type?: OrderType;
+
   @IsOptional()
   @IsString()
   mesaId?: string | null;
@@ -48,6 +60,12 @@ export class OrderRequestDto {
   @IsOptional()
   @IsUUID()
   addressId?: string;
+
+  @IsOptional()
+  @IsObject()
+  @ValidateNested()
+  @Type(() => OrderDeliveryAddressRequestDto)
+  deliveryAddress?: OrderDeliveryAddressRequestDto;
 
   @IsNotEmpty()
   @Type(() => Number)

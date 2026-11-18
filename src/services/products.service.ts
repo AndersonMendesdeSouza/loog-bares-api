@@ -1,5 +1,5 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { Repository } from 'typeorm';
+import { EntityManager, Repository } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
 import { ProductEntity } from 'src/entities/product-entity';
 import { ProductRequestDto } from 'src/dtos/request/product-request.dto';
@@ -15,7 +15,7 @@ export class ProductsService {
     @InjectRepository(ProductEntity)
     private readonly repo: Repository<ProductEntity>,
     private readonly imageService: ImageService,
-  ) { }
+  ) {}
 
   async create(dto: ProductRequestDto, files?: Express.Multer.File[]) {
     this.logger.log('Criando produto');
@@ -55,10 +55,15 @@ export class ProductsService {
     });
   }
 
-  async findOne(id: string) {
+  async findOne(id: string, manager?: EntityManager) {
     this.logger.log(`Buscando produto pelo ID: ${id}`);
 
-    const product = await this.repo.findOne({
+    let repository = this.repo;
+    if (manager) {
+      repository = manager.getRepository(ProductEntity);
+    }
+
+    const product = await repository.findOne({
       where: { id },
       relations: ['images'],
     });

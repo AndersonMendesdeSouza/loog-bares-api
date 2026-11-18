@@ -1,11 +1,12 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   Logger,
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
-import { IsNull, Not, Repository } from 'typeorm';
+import { IsNull, Repository } from 'typeorm';
 import type { FindOptionsWhere } from 'typeorm';
 import { randomUUID } from 'node:crypto';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -28,6 +29,12 @@ import {
   verifyGuestOrderToken,
 } from 'src/utils/guest-order-token';
 import { MessageService } from './message.service';
+import { ProductsService } from './products.service';
+import { CreateAdminOrderRequestDto } from 'src/dtos/request/create-admin-order-request.dto';
+import { OrderType } from 'src/dtos/enums/table-enums';
+import { ProductStatusEnum } from 'src/dtos/enums/product-status.enum';
+import type { OrderItem } from 'src/types/order-Item-type';
+import { TableEntity } from 'src/entities/table.entity';
 
 type AuthenticatedUser = {
   id: string;
@@ -46,32 +53,94 @@ export class OrdersService {
     private readonly addressRepo: Repository<AddressEntity>,
     private readonly chatService: ChatService,
     private readonly messageService: MessageService,
+    private readonly productsService: ProductsService,
+    @InjectRepository(TableEntity)
+    private readonly tableRepo: Repository<TableEntity>,
   ) {}
 
   async create(
     dto: OrderRequestDto,
     user?: AuthenticatedUser,
   ): Promise<OrderCreatedResponseDto> {
-    const mesaId = dto.mesaId?.trim() || null;
+    let mesaId = dto.mesaId?.trim() || null;
+    const hasTable = Boolean(dto.tableId || mesaId);
     const addressId = dto.addressId;
+    const deliveryAddress = dto.deliveryAddress;
+    const type =
+      dto.type ?? (hasTable ? OrderType.DINE_IN : OrderType.DELIVERY);
 
-    if (!mesaId && !addressId) {
+    if (
+      !hasTable &&
+      !addressId &&
+      !deliveryAddress &&
+      type !== OrderType.PICKUP
+    ) {
       throw new BadRequestException('Informe a mesa ou o endereço de entrega');
     }
 
-    if (mesaId && addressId) {
+    if (addressId && deliveryAddress) {
+      throw new BadRequestException(
+        'Informe apenas addressId ou deliveryAddress',
+      );
+    }
+
+    if (hasTable && (addressId || deliveryAddress)) {
       throw new BadRequestException(
         'Informe apenas a mesa ou o endereço de entrega',
       );
     }
 
-    if (mesaId && dto.deliveryFee !== 0) {
+    if (type === OrderType.DINE_IN && !hasTable) {
+      throw new BadRequestException('Informe a mesa do pedido');
+    }
+    if (
+      type === OrderType.DELIVERY &&
+      (hasTable || (!addressId && !deliveryAddress))
+    ) {
+      throw new BadRequestException('Informe o endereço de entrega');
+    }
+    if (
+      type === OrderType.PICKUP &&
+      (hasTable || addressId || deliveryAddress)
+    ) {
       throw new BadRequestException(
-        'Pedido em mesa não deve ter taxa de entrega',
+        'Retirada no balcão não deve ter mesa ou endereço',
+      );
+    }
+
+    if (type !== OrderType.DELIVERY && dto.deliveryFee !== 0) {
+      throw new BadRequestException(
+        type === OrderType.PICKUP
+          ? 'Retirada no balcão não deve ter taxa de entrega'
+          : 'Pedido em mesa não deve ter taxa de entrega',
       );
     }
 
     let address: AddressEntity | undefined;
+    let table: TableEntity | undefined;
+
+    if (hasTable) {
+      let savedTable: TableEntity | null;
+      if (dto.tableId) {
+        savedTable = await this.tableRepo.findOne({
+          where: { id: dto.tableId },
+        });
+      } else {
+        const number = Number(mesaId);
+        if (!Number.isInteger(number) || number <= 0)
+          throw new BadRequestException('Selecione uma mesa cadastrada');
+        savedTable = await this.tableRepo.findOne({ where: { number } });
+      }
+      if (!savedTable) throw new NotFoundException('Mesa não encontrada');
+      if (!savedTable.isActive)
+        throw new ConflictException('Esta mesa está inativa');
+      if (dto.tableId && mesaId && mesaId !== String(savedTable.number))
+        throw new BadRequestException(
+          'O número informado não corresponde à mesa selecionada',
+        );
+      table = savedTable;
+      mesaId = String(table.number);
+    }
 
     if (addressId) {
       if (!user?.id) {
@@ -98,7 +167,11 @@ export class OrdersService {
       ...dto,
       id: guestOrderId,
       mesaId,
+      tableId: table?.id ?? null,
+      table: table ?? null,
+      type,
       addressId: address?.id,
+      deliveryAddress: deliveryAddress ?? null,
       userId: user?.id ?? null,
       status: OrderStatusEnum.RECEIVED,
       address,
@@ -127,7 +200,8 @@ export class OrdersService {
     try {
       await this.messageService.sendMessage(dto.customerPhone, message);
     } catch (error) {
-      const reason = error instanceof Error ? error.message : 'Erro desconhecido';
+      const reason =
+        error instanceof Error ? error.message : 'Erro desconhecido';
       this.logger.error(
         `Falha ao enviar WhatsApp do pedido ${savedOrder.id}: ${reason}`,
       );
@@ -143,12 +217,126 @@ export class OrdersService {
     return { ...response, guestToken };
   }
 
+  async createAdmin(
+    dto: CreateAdminOrderRequestDto,
+  ): Promise<OrderResponseDto> {
+    if (
+      dto.type === OrderType.DELIVERY &&
+      (!dto.deliveryAddress || !dto.customerName?.trim() || !dto.customerPhone)
+    ) {
+      throw new BadRequestException(
+        'Informe o cliente, telefone e endereço da entrega',
+      );
+    }
+    if (dto.type === OrderType.PICKUP && dto.deliveryAddress) {
+      throw new BadRequestException('Retirada no balcão não deve ter endereço');
+    }
+    if (dto.items.length === 0)
+      throw new BadRequestException('Adicione pelo menos um produto');
+
+    return this.repo.manager.transaction(async (manager) => {
+      const items: OrderItem[] = [];
+      let subtotalInCents = 0;
+      for (const requestedItem of dto.items) {
+        const quantity = requestedItem.quantity;
+        if (!Number.isSafeInteger(quantity) || quantity <= 0) {
+          throw new BadRequestException('Quantidade de produto inválida');
+        }
+        const product = await this.productsService.findOne(
+          requestedItem.productId.toLowerCase(),
+          manager,
+        );
+        if (product.isActive !== ProductStatusEnum.ACTIVED) {
+          throw new ConflictException(
+            `O produto ${product.name} está indisponível`,
+          );
+        }
+        const unitPriceInCents = Math.round(
+          Number(product.promoPrice ?? product.price) * 100,
+        );
+        const totalPriceInCents = unitPriceInCents * quantity;
+        if (
+          !Number.isSafeInteger(unitPriceInCents) ||
+          unitPriceInCents < 0 ||
+          !Number.isSafeInteger(totalPriceInCents) ||
+          subtotalInCents + totalPriceInCents > 999_999_999_999
+        ) {
+          throw new BadRequestException(
+            'O valor do pedido é inválido ou ultrapassa o limite permitido',
+          );
+        }
+        subtotalInCents += totalPriceInCents;
+        const existingItem = items.find(
+          (item) =>
+            item.productId === product.id &&
+            item.unitPrice === unitPriceInCents / 100,
+        );
+        if (existingItem) {
+          const combinedQuantity = existingItem.quantity + quantity;
+          if (!Number.isSafeInteger(combinedQuantity))
+            throw new BadRequestException('Quantidade de produto inválida');
+          existingItem.quantity = combinedQuantity;
+          existingItem.totalPrice =
+            (existingItem.quantity * unitPriceInCents) / 100;
+          continue;
+        }
+        const image =
+          product.images?.find((image) => image.isPrimary) ??
+          product.images?.[0];
+        items.push({
+          id: product.id,
+          productId: product.id,
+          name: product.name,
+          description: product.description,
+          imageUrl: image?.imageUrl ?? undefined,
+          quantity,
+          unitPrice: unitPriceInCents / 100,
+          totalPrice: totalPriceInCents / 100,
+        });
+      }
+      const order = manager.create(OrderEntity, {
+        type: dto.type,
+        tableId: null,
+        table: null,
+        userId: null,
+        mesaId: null,
+        tab: null,
+        customerName: dto.customerName?.trim() || 'Retirada no balcão',
+        customerPhone: dto.customerPhone ?? '',
+        deliveryAddress: dto.deliveryAddress ?? null,
+        paymentMethod: null,
+        status: OrderStatusEnum.RECEIVED,
+        items,
+        subtotal: subtotalInCents / 100,
+        total: subtotalInCents / 100,
+        deliveryFee: 0,
+        discount: 0,
+        history: [
+          {
+            status: OrderStatusEnum.RECEIVED,
+            label: 'Pedido recebido',
+            createdAt: new Date().toISOString(),
+          },
+        ],
+      });
+      const saved = await manager.save(OrderEntity, order);
+      return toResponse(OrderResponseDto, {
+        ...saved,
+        subtotal: (subtotalInCents / 100).toFixed(2),
+        total: (subtotalInCents / 100).toFixed(2),
+        deliveryFee: '0.00',
+        discount: '0.00',
+      });
+    });
+  }
+
   async findAll(user: AuthenticatedUser): Promise<OrderResponseDto[]> {
     const where = user.role === UserRole.ADMIN ? {} : { userId: user.id };
     const orders = await this.repo.find({
       where,
       relations: {
         user: true,
+        table: true,
         address: true,
         chat: { messages: { sender: true } },
       },
@@ -167,6 +355,7 @@ export class OrdersService {
       where,
       relations: {
         user: true,
+        table: true,
         address: true,
         chat: guestToken ? false : { messages: { sender: true } },
       },
@@ -191,6 +380,7 @@ export class OrdersService {
       where,
       relations: {
         user: true,
+        table: true,
         address: true,
         chat: guestToken ? false : { messages: { sender: true } },
       },
@@ -305,7 +495,7 @@ export class OrdersService {
     if (guestToken) {
       verifyGuestOrderToken(guestToken, id);
 
-      return { id, userId: IsNull(), mesaId: Not(IsNull()) };
+      return { id, userId: IsNull() };
     }
 
     if (!user?.id) {

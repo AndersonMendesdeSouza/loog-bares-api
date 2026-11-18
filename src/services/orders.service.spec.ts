@@ -20,7 +20,9 @@ import {
   createGuestOrderToken,
   verifyGuestOrderToken,
 } from '../utils/guest-order-token';
-import { IsNull, Not } from 'typeorm';
+import { IsNull } from 'typeorm';
+import { ProductsService } from './products.service';
+import { TableEntity } from '../entities/table.entity';
 
 describe('OrdersService', () => {
   let service: OrdersService;
@@ -38,6 +40,7 @@ describe('OrdersService', () => {
     findOne: jest.fn(),
   };
   const addressRepo = { findOne: jest.fn() };
+  const tableRepo = { findOne: jest.fn() };
   const chatService = { create: jest.fn() };
   const messageService = { sendMessage: jest.fn() };
 
@@ -72,8 +75,10 @@ describe('OrdersService', () => {
         OrdersService,
         { provide: getRepositoryToken(OrderEntity), useValue: orderRepo },
         { provide: getRepositoryToken(AddressEntity), useValue: addressRepo },
+        { provide: getRepositoryToken(TableEntity), useValue: tableRepo },
         { provide: ChatService, useValue: chatService },
         { provide: MessageService, useValue: messageService },
+        { provide: ProductsService, useValue: { findOne: jest.fn() } },
       ],
     }).compile();
 
@@ -87,6 +92,11 @@ describe('OrdersService', () => {
     });
     orderRepo.findOne.mockResolvedValue({ id: 'order-id', userId: user.id });
     addressRepo.findOne.mockResolvedValue(address);
+    tableRepo.findOne.mockResolvedValue({
+      id: 'table-id',
+      number: 12,
+      isActive: true,
+    });
     messageService.sendMessage.mockResolvedValue({});
   });
 
@@ -96,6 +106,83 @@ describe('OrdersService', () => {
     } else {
       process.env.GUEST_ORDER_SECRET = originalGuestSecret;
     }
+  });
+
+  it('aceita entrega sem login com endereço enviado no pedido', async () => {
+    const deliveryAddress = {
+      street: 'Rua 1',
+      number: '10',
+      block: '2',
+      lot: '3',
+      neighborhood: 'Centro',
+      city: 'Buriti Alegre',
+      state: 'GO',
+      zipCode: '75660-000',
+    };
+    const dto = { ...createPayload(), mesaId: undefined, deliveryAddress };
+    const response = await service.create(dto);
+    expect(response.userId).toBeNull();
+    expect(response.deliveryAddress).toEqual(deliveryAddress);
+    expect(response.guestToken).toEqual(expect.any(String));
+    expect(addressRepo.findOne).not.toHaveBeenCalled();
+    expect(chatService.create).not.toHaveBeenCalled();
+    expect(orderRepo.findOne).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: response.id, userId: IsNull() } }),
+    );
+  });
+
+  it('rejeita addressId e deliveryAddress juntos', async () => {
+    const dto = {
+      ...createPayload(),
+      mesaId: undefined,
+      addressId: address.id,
+      deliveryAddress: {
+        street: 'Rua 1',
+        number: '10',
+        neighborhood: 'Centro',
+        city: 'Buriti Alegre',
+        state: 'GO',
+        zipCode: '75660-000',
+      },
+    };
+    await expect(service.create(dto, user)).rejects.toThrow(
+      'addressId ou deliveryAddress',
+    );
+    expect(orderRepo.save).not.toHaveBeenCalled();
+  });
+
+  it('valida a mesa pelo UUID e salva o relacionamento', async () => {
+    const response = await service.create({
+      ...createPayload(),
+      mesaId: undefined,
+      tableId: 'table-id',
+    });
+    expect(tableRepo.findOne).toHaveBeenCalledWith({
+      where: { id: 'table-id' },
+    });
+    expect(response.tableId).toBe('table-id');
+    expect(response.mesaId).toBe('12');
+  });
+
+  it('rejeita mesa inexistente ou inativa', async () => {
+    tableRepo.findOne.mockResolvedValueOnce(null);
+    await expect(service.create(createPayload())).rejects.toThrow(
+      'Mesa não encontrada',
+    );
+    tableRepo.findOne.mockResolvedValueOnce({
+      id: 'table-id',
+      number: 12,
+      isActive: false,
+    });
+    await expect(service.create(createPayload())).rejects.toThrow(
+      'mesa está inativa',
+    );
+    expect(orderRepo.save).not.toHaveBeenCalled();
+  });
+
+  it('valida também o número antigo contra as mesas cadastradas', async () => {
+    await service.create(createPayload());
+    expect(tableRepo.findOne).toHaveBeenCalledWith({ where: { number: 12 } });
   });
 
   it('creates a table order without looking up an address', async () => {
@@ -148,7 +235,9 @@ describe('OrdersService', () => {
   });
 
   it('returns the saved order and logs the failure when WhatsApp is unavailable', async () => {
-    const loggerError = jest.spyOn(Logger.prototype, 'error').mockImplementation();
+    const loggerError = jest
+      .spyOn(Logger.prototype, 'error')
+      .mockImplementation();
     messageService.sendMessage.mockRejectedValue(
       new Error('WhatsApp indisponível'),
     );
@@ -251,7 +340,7 @@ describe('OrdersService', () => {
     expect(chatService.create).not.toHaveBeenCalled();
     expect(addressRepo.findOne).not.toHaveBeenCalled();
     expect(orderRepo.findOne).toHaveBeenCalledWith({
-      where: { id: response.id, userId: IsNull(), mesaId: Not(IsNull()) },
+      where: { id: response.id, userId: IsNull() },
       relations: { user: true, address: true, chat: false },
     });
   });
@@ -299,7 +388,7 @@ describe('OrdersService', () => {
     expect(orderRepo.findOne).not.toHaveBeenCalled();
   });
 
-  it('restricts guest queries to table orders with no account owner', async () => {
+  it('restricts guest queries to the signed order with no account owner', async () => {
     const token = createGuestOrderToken('order-id');
     orderRepo.findOne.mockResolvedValue(null);
 
@@ -307,8 +396,8 @@ describe('OrdersService', () => {
       service.findById('order-id', undefined, token),
     ).rejects.toThrow(NotFoundException);
     expect(orderRepo.findOne).toHaveBeenCalledWith({
-      where: { id: 'order-id', userId: IsNull(), mesaId: Not(IsNull()) },
-      relations: { user: true, address: true, chat: false },
+      where: { id: 'order-id', userId: IsNull() },
+      relations: { user: true, address: true, table: true, chat: false },
     });
   });
 

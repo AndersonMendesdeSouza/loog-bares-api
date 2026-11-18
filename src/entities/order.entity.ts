@@ -1,21 +1,25 @@
 import { OrderStatusEnum } from 'src/dtos/enums/order-status.enum';
 import { PaymentMethodEnum } from 'src/dtos/enums/payment-method.enum';
+import { OrderType } from 'src/dtos/enums/table-enums';
 import { OrderItem } from 'src/types/order-Item-type';
+import type { OrderDeliveryAddress } from 'src/types/order-delivery-address-type';
 import {
-  Entity,
-  PrimaryGeneratedColumn,
   Column,
   CreateDateColumn,
-  UpdateDateColumn,
-  Index,
+  Entity,
   Generated,
-  ManyToOne,
+  Index,
   JoinColumn,
+  ManyToOne,
   OneToOne,
+  PrimaryGeneratedColumn,
+  UpdateDateColumn,
 } from 'typeorm';
-import { UserEntity } from './user.entity';
 import { AddressEntity } from './address.entity';
 import { ChatEntity } from './chat.entity';
+import { TabEntity } from './tab.entity';
+import { UserEntity } from './user.entity';
+import { TableEntity } from './table.entity';
 
 type OrderHistory = {
   status: OrderStatusEnum;
@@ -31,6 +35,16 @@ export class OrderEntity {
 
   @Column({ type: 'varchar', nullable: true })
   mesaId: string | null;
+
+  @Column({ type: 'uuid', nullable: true })
+  tableId: string | null;
+
+  @ManyToOne(() => TableEntity, (table) => table.orders, {
+    nullable: true,
+    onDelete: 'RESTRICT',
+  })
+  @JoinColumn({ name: 'tableId' })
+  table: TableEntity | null;
 
   @Column({ type: 'uuid', nullable: true })
   userId: string | null;
@@ -59,8 +73,8 @@ export class OrderEntity {
   })
   status: OrderStatusEnum;
 
-  @Column({ type: 'enum', enum: PaymentMethodEnum })
-  paymentMethod: PaymentMethodEnum;
+  @Column({ type: 'enum', enum: PaymentMethodEnum, nullable: true })
+  paymentMethod: PaymentMethodEnum | null;
 
   @Column({ type: 'uuid', nullable: true })
   addressId?: string;
@@ -70,6 +84,9 @@ export class OrderEntity {
   })
   @JoinColumn({ name: 'addressId' })
   address?: AddressEntity;
+
+  @Column({ type: 'jsonb', nullable: true })
+  deliveryAddress: OrderDeliveryAddress | null;
 
   @Column({ type: 'varchar', length: 160 })
   customerName: string;
@@ -94,6 +111,20 @@ export class OrderEntity {
 
   @Column({ type: 'jsonb', default: () => "'[]'::jsonb" })
   history: OrderHistory[];
+
+  @Column({
+    type: 'enum',
+    enum: OrderType,
+    default: OrderType.DELIVERY,
+  })
+  type: OrderType;
+
+  @ManyToOne(() => TabEntity, (tab) => tab.orders, {
+    nullable: true,
+    onDelete: 'RESTRICT',
+  })
+  @JoinColumn({ name: 'tabId' })
+  tab: TabEntity | null;
 
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt: Date;

@@ -9,6 +9,8 @@ import { SystemSettingsModule } from './modules/system-settings.module';
 import { AddressModule } from './modules/address.module';
 import { ChatModule } from './modules/chat.module';
 import { CloudinaryModule } from './cloudinary/cloudinary.module';
+import { TableModule } from './modules/table.module';
+import { TabModule } from './modules/tab.module';
 
 @Module({
   imports: [
@@ -30,6 +32,8 @@ import { CloudinaryModule } from './cloudinary/cloudinary.module';
     AddressModule,
     ChatModule,
     CloudinaryModule,
+    TableModule,
+    TabModule,
   ],
 })
 export class AppModule {}

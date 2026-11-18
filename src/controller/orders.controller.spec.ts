@@ -13,6 +13,7 @@ describe('OrdersController authentication', () => {
   let server: Server;
   const ordersService = {
     create: jest.fn(),
+    createAdmin: jest.fn(),
     findAll: jest.fn(),
     findById: jest.fn(),
     alterStatus: jest.fn(),
@@ -85,6 +86,37 @@ describe('OrdersController authentication', () => {
     await request(server).get('/orders/find-all').expect(401);
 
     expect(ordersService.findAll).not.toHaveBeenCalled();
+  });
+
+  it('protege a criação administrativa sem exigir login do cliente', async () => {
+    await request(server).post('/orders/admin').send({}).expect(401);
+    const customerToken = new JwtService().sign(
+      { sub: 'customer-id', role: UserRole.CUSTOMER },
+      { secret: process.env.JWT_SECRET || 'jwt_secret_dev' },
+    );
+    await request(server)
+      .post('/orders/admin')
+      .set('Authorization', `Bearer ${customerToken}`)
+      .send({})
+      .expect(403);
+    const adminToken = new JwtService().sign(
+      { sub: 'admin-id', role: UserRole.ADMIN },
+      { secret: process.env.JWT_SECRET || 'jwt_secret_dev' },
+    );
+    const dto = {
+      type: 'PICKUP',
+      items: [{ productId: 'product-id', quantity: 1 }],
+    };
+    ordersService.createAdmin.mockResolvedValue({
+      id: 'order-id',
+      userId: null,
+    });
+    await request(server)
+      .post('/orders/admin')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send(dto)
+      .expect(201);
+    expect(ordersService.createAdmin).toHaveBeenCalledWith(dto);
   });
 
   it('forwards the guest token only to the requested order lookup', async () => {

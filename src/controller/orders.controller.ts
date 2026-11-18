@@ -23,6 +23,8 @@ import { OrdersService } from 'src/services/orders.service';
 import type { Request as ExpressRequest } from 'express';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
 import { OptionalJwtAuthGuard } from 'src/auth/optional-jwt-auth.guard';
+import { AdminGuard } from 'src/auth/admin.guard';
+import { CreateAdminOrderRequestDto } from 'src/dtos/request/create-admin-order-request.dto';
 
 type AuthenticatedUser = {
   id: string;
@@ -38,6 +40,14 @@ type OptionalAuthenticatedRequest = ExpressRequest & {
 @Controller('orders')
 export class OrdersController {
   constructor(private readonly ordersService: OrdersService) {}
+
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @Post('admin')
+  createAdmin(
+    @Body() dto: CreateAdminOrderRequestDto,
+  ): Promise<OrderResponseDto> {
+    return this.ordersService.createAdmin(dto);
+  }
 
   @UseGuards(OptionalJwtAuthGuard)
   @Post()

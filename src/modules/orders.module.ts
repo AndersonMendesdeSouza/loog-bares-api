@@ -9,6 +9,7 @@ import { ProductsModule } from './products.module';
 import { OrdersService } from 'src/services/orders.service';
 import { ChatModule } from './chat.module';
 import { MessageModule } from './message.module';
+import { TableEntity } from 'src/entities/table.entity';
 
 @Module({
   imports: [
@@ -17,10 +18,11 @@ import { MessageModule } from './message.module';
       ProductEntity,
       ImageEntity,
       AddressEntity,
+      TableEntity,
     ]),
     ProductsModule,
     ChatModule,
-    MessageModule
+    MessageModule,
   ],
   controllers: [OrdersController],
   providers: [OrdersService],
