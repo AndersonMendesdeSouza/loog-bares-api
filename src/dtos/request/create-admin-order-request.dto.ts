@@ -4,6 +4,7 @@ import {
   IsIn,
   IsObject,
   IsString,
+  IsUUID,
   Matches,
   MaxLength,
   ValidateIf,
@@ -14,8 +15,17 @@ import { AddTabOrderRequestDto } from './add-tab-order-request.dto';
 import { OrderDeliveryAddressRequestDto } from './order-delivery-address-request.dto';
 
 export class CreateAdminOrderRequestDto extends AddTabOrderRequestDto {
-  @IsIn([OrderType.PICKUP, OrderType.DELIVERY])
-  type: OrderType.PICKUP | OrderType.DELIVERY;
+  @IsIn([OrderType.PICKUP, OrderType.DELIVERY, OrderType.DINE_IN])
+  type: OrderType.PICKUP | OrderType.DELIVERY | OrderType.DINE_IN;
+
+  @ValidateIf((dto) => dto.type === OrderType.DINE_IN)
+  @IsUUID()
+  tableId?: string;
+
+  @ValidateIf((dto) => dto.type === OrderType.DINE_IN)
+  @IsString()
+  @Matches(/^\d+$/, { message: 'Informe o número da mesa' })
+  mesaId?: string;
 
   @ValidateIf(
     (dto: CreateAdminOrderRequestDto, value: unknown) =>

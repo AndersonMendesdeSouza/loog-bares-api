@@ -10,6 +10,7 @@ import { OrdersService } from 'src/services/orders.service';
 import { ChatModule } from './chat.module';
 import { MessageModule } from './message.module';
 import { TableEntity } from 'src/entities/table.entity';
+import { TabEntity } from 'src/entities/tab.entity';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { TableEntity } from 'src/entities/table.entity';
       ImageEntity,
       AddressEntity,
       TableEntity,
+      TabEntity,
     ]),
     ProductsModule,
     ChatModule,

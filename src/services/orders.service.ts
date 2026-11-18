@@ -7,7 +7,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { IsNull, Repository } from 'typeorm';
-import type { FindOptionsWhere } from 'typeorm';
+import type { FindOptionsWhere, EntityManager } from 'typeorm';
 import { randomUUID } from 'node:crypto';
 import { InjectRepository } from '@nestjs/typeorm';
 import { OrderEntity } from 'src/entities/order.entity';
@@ -35,6 +35,8 @@ import { OrderType } from 'src/dtos/enums/table-enums';
 import { ProductStatusEnum } from 'src/dtos/enums/product-status.enum';
 import type { OrderItem } from 'src/types/order-Item-type';
 import { TableEntity } from 'src/entities/table.entity';
+import { TabEntity } from 'src/entities/tab.entity';
+import { TabStatus } from 'src/dtos/enums/table-enums';
 
 type AuthenticatedUser = {
   id: string;
@@ -185,6 +187,11 @@ export class OrdersService {
     ];
 
     const savedOrder = await this.repo.save(order);
+
+    if (type === OrderType.DINE_IN && table) {
+      await this.attachOrderToTable(savedOrder, table);
+    }
+
     const productList = savedOrder.items
       .slice(0, 3)
       .map((item) => `• ${item.quantity}x ${item.name}`)
@@ -233,8 +240,19 @@ export class OrdersService {
     }
     if (dto.items.length === 0)
       throw new BadRequestException('Adicione pelo menos um produto');
+    if (dto.type === OrderType.DINE_IN && !dto.tableId && !dto.mesaId) {
+      throw new BadRequestException('Informe a mesa do pedido');
+    }
 
     return this.repo.manager.transaction(async (manager) => {
+      let table: TableEntity | null = null;
+      if (dto.type === OrderType.DINE_IN) {
+        table = dto.tableId
+          ? await manager.findOne(TableEntity, { where: { id: dto.tableId }, lock: { mode: 'pessimistic_write' } })
+          : await manager.findOne(TableEntity, { where: { number: Number(dto.mesaId) }, lock: { mode: 'pessimistic_write' } });
+        if (!table) throw new NotFoundException('Mesa não encontrada');
+        if (!table.isActive) throw new ConflictException('Esta mesa está inativa');
+      }
       const items: OrderItem[] = [];
       let subtotalInCents = 0;
       for (const requestedItem of dto.items) {
@@ -294,14 +312,33 @@ export class OrdersService {
           totalPrice: totalPriceInCents / 100,
         });
       }
+      let tab: TabEntity | null = null;
+      if (table) {
+        tab = await manager.findOne(TabEntity, {
+          where: { tableId: table.id, status: TabStatus.OPEN },
+          lock: { mode: 'pessimistic_write' },
+        });
+        if (!tab) {
+          tab = manager.create(TabEntity, {
+            tableId: table.id,
+            table,
+            status: TabStatus.OPEN,
+            closedAt: null,
+            closingTotal: null,
+            paymentMethod: null,
+          });
+          tab = await manager.save(TabEntity, tab);
+        }
+      }
+
       const order = manager.create(OrderEntity, {
         type: dto.type,
-        tableId: null,
-        table: null,
+        tableId: table?.id ?? null,
+        table: table ?? null,
         userId: null,
-        mesaId: null,
-        tab: null,
-        customerName: dto.customerName?.trim() || 'Retirada no balcão',
+        mesaId: table ? String(table.number) : null,
+        tab,
+        customerName: table ? `Mesa ${table.number}` : dto.customerName?.trim() || 'Retirada no balcão',
         customerPhone: dto.customerPhone ?? '',
         deliveryAddress: dto.deliveryAddress ?? null,
         paymentMethod: null,
@@ -505,5 +542,42 @@ export class OrdersService {
     if (user.role === UserRole.ADMIN) return { id };
 
     return { id, userId: user.id };
+  }
+
+  private async attachOrderToTable(
+    order: OrderEntity,
+    table: TableEntity,
+  ): Promise<TabEntity> {
+    return this.repo.manager.transaction(async (manager) => {
+      await manager.findOne(TableEntity, {
+        where: { id: table.id },
+        lock: { mode: 'pessimistic_write' },
+      });
+
+      let tab = await manager.findOne(TabEntity, {
+        where: { tableId: table.id, status: TabStatus.OPEN },
+        lock: { mode: 'pessimistic_write' },
+      });
+
+      if (!tab) {
+        tab = manager.create(TabEntity, {
+          tableId: table.id,
+          table,
+          status: TabStatus.OPEN,
+          closedAt: null,
+          closingTotal: null,
+          paymentMethod: null,
+        });
+        tab = await manager.save(TabEntity, tab);
+      }
+
+      order.tab = tab;
+      order.table = table;
+      order.tableId = table.id;
+      order.mesaId = String(table.number);
+      order.type = OrderType.DINE_IN;
+      await manager.save(OrderEntity, order);
+      return tab;
+    });
   }
 }
