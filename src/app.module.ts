@@ -11,7 +11,7 @@ import { ChatModule } from './modules/chat.module';
 import { CloudinaryModule } from './cloudinary/cloudinary.module';
 import { TableModule } from './modules/table.module';
 import { TabModule } from './modules/tab.module';
-import { OrderGatewayModule } from './websocket/order.gateway.module';
+import { GatewayModule } from './websocket/gateway.module';
 
 @Module({
   imports: [
@@ -35,7 +35,7 @@ import { OrderGatewayModule } from './websocket/order.gateway.module';
     CloudinaryModule,
     TableModule,
     TabModule,
-    OrderGatewayModule
+    GatewayModule
   ],
 })
 export class AppModule {}

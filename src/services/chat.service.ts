@@ -15,6 +15,7 @@ import { ChatEntity } from 'src/entities/chat.entity';
 import { OrderEntity } from 'src/entities/order.entity';
 import { toResponse } from 'src/utils/transform-response';
 import { Repository } from 'typeorm';
+import { MessageGateway } from 'src/websocket/message.gateway';
 
 type AuthenticatedUser = {
   id: string;
@@ -31,7 +32,9 @@ export class ChatService {
     private readonly messageRepo: Repository<ChatMessageEntity>,
     @InjectRepository(OrderEntity)
     private readonly orderRepo: Repository<OrderEntity>,
-  ) {}
+    private readonly messageGateway: MessageGateway,
+
+  ) { }
 
   async create(
     dto: ChatRequestDto,
@@ -129,6 +132,7 @@ export class ChatService {
       throw new BadRequestException('Mensagem não pode ser vazia');
     }
 
+    this.messageGateway.notifyNewMessage(dto.text)
     const chat = await this.findChatById(dto.chatId, user);
     const message = this.messageRepo.create({
       chatId: chat.id,
