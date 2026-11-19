@@ -11,6 +11,7 @@ import { ChatModule } from './chat.module';
 import { MessageModule } from './message.module';
 import { TableEntity } from 'src/entities/table.entity';
 import { TabEntity } from 'src/entities/tab.entity';
+import { OrderGatewayModule } from 'src/websocket/order.gateway.module';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { TabEntity } from 'src/entities/tab.entity';
     ProductsModule,
     ChatModule,
     MessageModule,
+    OrderGatewayModule
   ],
   controllers: [OrdersController],
   providers: [OrdersService],

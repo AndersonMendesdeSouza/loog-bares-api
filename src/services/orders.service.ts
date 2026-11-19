@@ -37,6 +37,7 @@ import type { OrderItem } from 'src/types/order-Item-type';
 import { TableEntity } from 'src/entities/table.entity';
 import { TabEntity } from 'src/entities/tab.entity';
 import { TabStatus } from 'src/dtos/enums/table-enums';
+import { OrdersGateway } from 'src/websocket/orders.gateway';
 
 type AuthenticatedUser = {
   id: string;
@@ -55,10 +56,11 @@ export class OrdersService {
     private readonly addressRepo: Repository<AddressEntity>,
     private readonly chatService: ChatService,
     private readonly messageService: MessageService,
+    private readonly ordersGateway: OrdersGateway,
     private readonly productsService: ProductsService,
     @InjectRepository(TableEntity)
     private readonly tableRepo: Repository<TableEntity>,
-  ) {}
+  ) { }
 
   async create(
     dto: OrderRequestDto,
@@ -226,6 +228,7 @@ export class OrdersService {
 
     const response = await this.findById(savedOrder.id, undefined, guestToken);
 
+    this.ordersGateway.notifyNewOrder(response)
     return { ...response, guestToken };
   }
 
@@ -254,13 +257,13 @@ export class OrdersService {
       if (dto.type === OrderType.DINE_IN) {
         table = dto.tableId
           ? await manager.findOne(TableEntity, {
-              where: { id: dto.tableId },
-              lock: { mode: 'pessimistic_write' },
-            })
+            where: { id: dto.tableId },
+            lock: { mode: 'pessimistic_write' },
+          })
           : await manager.findOne(TableEntity, {
-              where: { number: Number(dto.mesaId) },
-              lock: { mode: 'pessimistic_write' },
-            });
+            where: { number: Number(dto.mesaId) },
+            lock: { mode: 'pessimistic_write' },
+          });
         if (!table) throw new NotFoundException('Mesa não encontrada');
         if (!table.isActive)
           throw new ConflictException('Esta mesa está inativa');
@@ -448,80 +451,80 @@ export class OrdersService {
       throw new BadRequestException('Cliente só pode cancelar o pedido');
     }
 
+    const isTableOrder =
+      order.type === OrderType.DINE_IN ||
+      Boolean(order.tableId || order.mesaId?.trim());
+    const isPickupOrder = order.type === OrderType.PICKUP;
+    const isFinished = order.status === OrderStatusEnum.DELIVERED;
+    let nextStatus: OrderStatusEnum;
+    let label: string;
+
     if (status.status === OrderStatusEnum.CANCELED) {
-      if (order.status === OrderStatusEnum.DELIVERED) {
-        throw new BadRequestException('Pedido entregue não pode ser cancelado');
+      if (
+        isFinished ||
+        order.status === OrderStatusEnum.READY ||
+        ((isTableOrder || isPickupOrder) &&
+          order.status === OrderStatusEnum.ON_ROUTE)
+      ) {
+        throw new BadRequestException(
+          'Pedido pronto ou entregue não pode ser cancelado',
+        );
       }
-
-      if (order.status !== OrderStatusEnum.CANCELED) {
-        order.status = OrderStatusEnum.CANCELED;
-        order.history = [
-          ...(order.history ?? []),
-          {
-            status: OrderStatusEnum.CANCELED,
-            label: 'Pedido cancelado',
-            createdAt: new Date().toISOString(),
-          },
-        ];
+      if (order.status === OrderStatusEnum.CANCELED) {
+        return toResponse(OrderResponseDto, order);
       }
-
-      const canceledOrder = await this.repo.save(order);
-
-      return toResponse(OrderResponseDto, canceledOrder);
+      nextStatus = OrderStatusEnum.CANCELED;
+      label = 'Pedido cancelado';
+    } else {
+      if (isFinished || order.status === OrderStatusEnum.CANCELED) {
+        throw new BadRequestException(
+          'Pedido finalizado ou cancelado não pode ser alterado',
+        );
+      }
+      // Os cards enviam a etapa atual. Uma tela desatualizada não pode pular etapas.
+      if (status.status !== order.status) {
+        throw new ConflictException(
+          'O pedido foi atualizado. Recarregue os dados antes de continuar',
+        );
+      }
+      if (order.status === OrderStatusEnum.RECEIVED) {
+        nextStatus = OrderStatusEnum.PREPARING;
+        label = 'Pedido em preparação';
+      } else if (order.status === OrderStatusEnum.PREPARING) {
+        if (isTableOrder || isPickupOrder) {
+          nextStatus = OrderStatusEnum.READY;
+          label = 'Pedido pronto';
+        } else {
+          nextStatus = OrderStatusEnum.ON_ROUTE;
+          label = 'Pedido em rota';
+        }
+      } else if (
+        order.status === OrderStatusEnum.ON_ROUTE ||
+        ((isTableOrder || isPickupOrder) &&
+          order.status === OrderStatusEnum.READY)
+      ) {
+        nextStatus = OrderStatusEnum.DELIVERED;
+        label = 'Pedido entregue';
+      } else {
+        throw new BadRequestException('Etapa inválida para este pedido');
+      }
     }
 
-    if (order.status === OrderStatusEnum.CANCELED) {
-      throw new BadRequestException('Pedido cancelado não pode ser alterado');
+    const history = [
+      ...(order.history ?? []),
+      { status: nextStatus, label, createdAt: new Date().toISOString() },
+    ];
+    // Atualiza apenas se outro atendimento ainda não tiver alterado a etapa.
+    const result = await this.repo.update(
+      { id: order.id, status: order.status },
+      { status: nextStatus, history },
+    );
+    if (result.affected !== 1) {
+      throw new ConflictException(
+        'O pedido foi atualizado por outro atendimento. Recarregue os dados',
+      );
     }
-
-    if (
-      status.status === OrderStatusEnum.RECEIVED &&
-      order.status !== OrderStatusEnum.PREPARING
-    ) {
-      order.status = OrderStatusEnum.PREPARING;
-      order.history = [
-        ...(order.history ?? []),
-        {
-          status: OrderStatusEnum.PREPARING,
-          label: 'Pedido em preparação',
-          createdAt: new Date().toISOString(),
-        },
-      ];
-    }
-
-    if (
-      status.status === OrderStatusEnum.PREPARING &&
-      order.status !== OrderStatusEnum.ON_ROUTE
-    ) {
-      order.status = OrderStatusEnum.ON_ROUTE;
-      order.history = [
-        ...(order.history ?? []),
-        {
-          status: OrderStatusEnum.ON_ROUTE,
-          label: 'Pedido em rota',
-          createdAt: new Date().toISOString(),
-        },
-      ];
-    }
-
-    if (
-      status.status === OrderStatusEnum.ON_ROUTE &&
-      order.status !== OrderStatusEnum.DELIVERED
-    ) {
-      order.status = OrderStatusEnum.DELIVERED;
-      order.history = [
-        ...(order.history ?? []),
-        {
-          status: OrderStatusEnum.DELIVERED,
-          label: 'Pedido entregue',
-          createdAt: new Date().toISOString(),
-        },
-      ];
-    }
-
-    const data = await this.repo.save(order);
-
-    return toResponse(OrderResponseDto, data);
+    return this.findById(id, user, guestToken);
   }
 
   // async update(id: string, dto: UpdateProductDto) {

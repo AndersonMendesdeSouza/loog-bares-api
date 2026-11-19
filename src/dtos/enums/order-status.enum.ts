@@ -1,6 +1,7 @@
 export enum OrderStatusEnum {
   RECEIVED = 'RECEIVED',
   PREPARING = 'PREPARING',
+  READY = 'READY',
   ON_ROUTE = 'ON_ROUTE',
   DELIVERED = 'DELIVERED',
   CANCELED = 'CANCELED',
