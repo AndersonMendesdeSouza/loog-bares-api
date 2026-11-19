@@ -9,6 +9,7 @@ import { MessageService } from './message.service';
 import { OrderType } from '../dtos/enums/table-enums';
 import { ProductStatusEnum } from '../dtos/enums/product-status.enum';
 import { CreateAdminOrderRequestDto } from '../dtos/request/create-admin-order-request.dto';
+import { OrdersGateway } from '../websocket/orders.gateway';
 
 describe('Pedidos de balcão e delivery pelo admin', () => {
   const manager = { create: jest.fn(), save: jest.fn() };
@@ -16,12 +17,14 @@ describe('Pedidos de balcão e delivery pelo admin', () => {
   const products = { findOne: jest.fn() };
   const chat = { create: jest.fn() };
   const message = { sendMessage: jest.fn() };
+  const gateway = { notifyNewOrder: jest.fn() };
   const addressRepo = { findOne: jest.fn(), save: jest.fn() };
   const service = new OrdersService(
     repo as unknown as Repository<OrderEntity>,
     addressRepo as unknown as Repository<AddressEntity>,
     chat as unknown as ChatService,
     message as unknown as MessageService,
+    gateway as unknown as OrdersGateway,
     products as unknown as ProductsService,
     {} as Repository<TableEntity>,
   );
@@ -85,6 +88,7 @@ describe('Pedidos de balcão e delivery pelo admin', () => {
       expect.objectContaining({ type: OrderType.DELIVERY, tab: null }),
     );
     expect(chat.create).not.toHaveBeenCalled();
+    expect(gateway.notifyNewOrder).toHaveBeenCalledWith(response);
   });
 
   it('consulta o produto e calcula preços no servidor', async () => {
@@ -118,6 +122,7 @@ describe('Pedidos de balcão e delivery pelo admin', () => {
     expect(response.customerName).toBe('Retirada no balcão');
     expect(response.userId).toBeNull();
     expect(response.deliveryAddress).toBeNull();
+    expect(gateway.notifyNewOrder).toHaveBeenCalledWith(response);
   });
 
   it('não salva produto inativo', async () => {
@@ -130,6 +135,7 @@ describe('Pedidos de balcão e delivery pelo admin', () => {
       'indisponível',
     );
     expect(manager.save).not.toHaveBeenCalled();
+    expect(gateway.notifyNewOrder).not.toHaveBeenCalled();
   });
 
   it('não salva quando um produto não existe', async () => {

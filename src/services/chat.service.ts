@@ -33,8 +33,7 @@ export class ChatService {
     @InjectRepository(OrderEntity)
     private readonly orderRepo: Repository<OrderEntity>,
     private readonly messageGateway: MessageGateway,
-
-  ) { }
+  ) {}
 
   async create(
     dto: ChatRequestDto,
@@ -132,7 +131,6 @@ export class ChatService {
       throw new BadRequestException('Mensagem não pode ser vazia');
     }
 
-    this.messageGateway.notifyNewMessage(dto.text)
     const chat = await this.findChatById(dto.chatId, user);
     const message = this.messageRepo.create({
       chatId: chat.id,
@@ -149,7 +147,9 @@ export class ChatService {
       relations: { sender: true },
     });
 
-    return this.toMessageResponse(messageWithSender ?? savedMessage);
+    const response = this.toMessageResponse(messageWithSender ?? savedMessage);
+    this.messageGateway.notifyNewMessage(chat.orderId, response);
+    return response;
   }
 
   async findMessages(

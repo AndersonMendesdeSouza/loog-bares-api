@@ -1,19 +1,26 @@
-import {
-  WebSocketGateway,
-  WebSocketServer,
-} from '@nestjs/websockets';
+import { WebSocketGateway, WebSocketServer } from '@nestjs/websockets';
 import { Server } from 'socket.io';
+import { ChatMessageResponseDto } from 'src/dtos/response/chat-message-response.dto';
 
 @WebSocketGateway({
   cors: {
-    origin: ['http://localhost:5174', 'https://burguer-admin-beta.vercel.app'],
+    origin: '*',
   },
 })
 export class MessageGateway {
   @WebSocketServer()
   server: Server;
 
-  notifyNewMessage(order: any) {
-    this.server.emit('message.created', order);
+  notifyNewMessage(orderId: string, message: ChatMessageResponseDto) {
+    this.server.emit('message.created', {
+      orderId,
+      message: {
+        id: message.id,
+        chatId: message.chatId,
+        senderType: message.senderType,
+        text: message.text,
+        createdAt: message.createdAt,
+      },
+    });
   }
 }

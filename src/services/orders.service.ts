@@ -60,7 +60,7 @@ export class OrdersService {
     private readonly productsService: ProductsService,
     @InjectRepository(TableEntity)
     private readonly tableRepo: Repository<TableEntity>,
-  ) { }
+  ) {}
 
   async create(
     dto: OrderRequestDto,
@@ -199,6 +199,13 @@ export class OrdersService {
       await this.attachOrderToTable(savedOrder, table);
     }
 
+    if (user) {
+      await this.chatService.create({ orderId: savedOrder.id }, user);
+    }
+
+    const response = await this.findById(savedOrder.id, user, guestToken);
+    this.ordersGateway.notifyNewOrder(response);
+
     const productList = savedOrder.items
       .slice(0, 3)
       .map((item) => `• ${item.quantity}x ${item.name}`)
@@ -221,15 +228,8 @@ export class OrdersService {
       );
     }
 
-    if (user) {
-      await this.chatService.create({ orderId: savedOrder.id }, user);
-      return this.findById(savedOrder.id, user);
-    }
-
-    const response = await this.findById(savedOrder.id, undefined, guestToken);
-
-    this.ordersGateway.notifyNewOrder(response)
-    return { ...response, guestToken };
+    if (guestToken) return { ...response, guestToken };
+    return response;
   }
 
   async createAdmin(
@@ -252,18 +252,18 @@ export class OrdersService {
       throw new BadRequestException('Informe a mesa do pedido');
     }
 
-    return this.repo.manager.transaction(async (manager) => {
+    const response = await this.repo.manager.transaction(async (manager) => {
       let table: TableEntity | null = null;
       if (dto.type === OrderType.DINE_IN) {
         table = dto.tableId
           ? await manager.findOne(TableEntity, {
-            where: { id: dto.tableId },
-            lock: { mode: 'pessimistic_write' },
-          })
+              where: { id: dto.tableId },
+              lock: { mode: 'pessimistic_write' },
+            })
           : await manager.findOne(TableEntity, {
-            where: { number: Number(dto.mesaId) },
-            lock: { mode: 'pessimistic_write' },
-          });
+              where: { number: Number(dto.mesaId) },
+              lock: { mode: 'pessimistic_write' },
+            });
         if (!table) throw new NotFoundException('Mesa não encontrada');
         if (!table.isActive)
           throw new ConflictException('Esta mesa está inativa');
@@ -382,6 +382,10 @@ export class OrdersService {
         discount: '0.00',
       });
     });
+
+    // A busca do admin precisa enxergar o pedido já confirmado no banco.
+    this.ordersGateway.notifyNewOrder(response);
+    return response;
   }
 
   async findAll(user: AuthenticatedUser): Promise<OrderResponseDto[]> {
