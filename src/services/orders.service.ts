@@ -37,7 +37,7 @@ import type { OrderItem } from 'src/types/order-Item-type';
 import { TableEntity } from 'src/entities/table.entity';
 import { TabEntity } from 'src/entities/tab.entity';
 import { TabStatus } from 'src/dtos/enums/table-enums';
-import { OrdersGateway } from 'src/websocket/orders.gateway';
+import { OrdersGateway, OrdersGatewayUpdateStatus } from 'src/websocket/orders.gateway';
 
 type AuthenticatedUser = {
   id: string;
@@ -58,9 +58,10 @@ export class OrdersService {
     private readonly messageService: MessageService,
     private readonly ordersGateway: OrdersGateway,
     private readonly productsService: ProductsService,
+    private readonly orderStatusService: OrdersGatewayUpdateStatus,
     @InjectRepository(TableEntity)
     private readonly tableRepo: Repository<TableEntity>,
-  ) {}
+  ) { }
 
   async create(
     dto: OrderRequestDto,
@@ -257,13 +258,13 @@ export class OrdersService {
       if (dto.type === OrderType.DINE_IN) {
         table = dto.tableId
           ? await manager.findOne(TableEntity, {
-              where: { id: dto.tableId },
-              lock: { mode: 'pessimistic_write' },
-            })
+            where: { id: dto.tableId },
+            lock: { mode: 'pessimistic_write' },
+          })
           : await manager.findOne(TableEntity, {
-              where: { number: Number(dto.mesaId) },
-              lock: { mode: 'pessimistic_write' },
-            });
+            where: { number: Number(dto.mesaId) },
+            lock: { mode: 'pessimistic_write' },
+          });
         if (!table) throw new NotFoundException('Mesa não encontrada');
         if (!table.isActive)
           throw new ConflictException('Esta mesa está inativa');
@@ -513,7 +514,6 @@ export class OrdersService {
         throw new BadRequestException('Etapa inválida para este pedido');
       }
     }
-
     const history = [
       ...(order.history ?? []),
       { status: nextStatus, label, createdAt: new Date().toISOString() },
@@ -528,6 +528,7 @@ export class OrdersService {
         'O pedido foi atualizado por outro atendimento. Recarregue os dados',
       );
     }
+    this.orderStatusService.notifyNewOrderStatus(id);
     return this.findById(id, user, guestToken);
   }
 
