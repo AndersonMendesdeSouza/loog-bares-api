@@ -148,7 +148,13 @@ export class ChatService {
     });
 
     const response = this.toMessageResponse(messageWithSender ?? savedMessage);
-    this.messageGateway.notifyNewMessage(chat.orderId, response);
+    this.messageGateway.notifyNewMessage(
+      chat.orderId,
+      chat.order.customerName,
+      response,
+      chat.order.type,
+      chat.order.mesaId,
+    );
     return response;
   }
 

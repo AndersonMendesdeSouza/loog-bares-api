@@ -19,6 +19,8 @@ import { OrderStatusEnum } from 'src/dtos/enums/order-status.enum';
 import { ProductStatusEnum } from 'src/dtos/enums/product-status.enum';
 import { OrderItem } from 'src/types/order-Item-type';
 import { toResponse } from 'src/utils/transform-response';
+import { OrdersGateway } from 'src/websocket/orders.gateway';
+import { OrderResponseDto } from 'src/dtos/response/orders-response.dto';
 import { ProductsService } from './products.service';
 
 @Injectable()
@@ -29,6 +31,7 @@ export class TabService {
     @InjectRepository(TableEntity)
     private readonly tableRepo: Repository<TableEntity>,
     private readonly productsService: ProductsService,
+    private readonly ordersGateway: OrdersGateway,
   ) {}
 
   async create(dto: TabRequestDto): Promise<TabResponseDto> {
@@ -88,7 +91,7 @@ export class TabService {
   }
 
   async createOrder(dto: CreateTabOrderRequestDto): Promise<TabResponseDto> {
-    return this.repo.manager.transaction(async (manager) => {
+    const result = await this.repo.manager.transaction(async (manager) => {
       // Serializa a abertura de comandas para a mesma mesa.
       const table = await manager.findOne(TableEntity, {
         where: { id: dto.tableId },
@@ -128,13 +131,15 @@ export class TabService {
 
       return this.saveOrder(manager, tab, table, dto);
     });
+    this.ordersGateway.notifyNewOrder(result.order);
+    return result.tab;
   }
 
   async addOrder(
     id: string,
     dto: AddTabOrderRequestDto,
   ): Promise<TabResponseDto> {
-    return this.repo.manager.transaction(async (manager) => {
+    const result = await this.repo.manager.transaction(async (manager) => {
       // O fechamento também atualiza esta linha e aguarda esta operação terminar.
       const tab = await manager.findOne(TabEntity, {
         where: { id },
@@ -153,6 +158,8 @@ export class TabService {
 
       return this.saveOrder(manager, tab, table, dto);
     });
+    this.ordersGateway.notifyNewOrder(result.order);
+    return result.tab;
   }
 
   async update(id: string, dto: UpdateTabRequestDto): Promise<TabResponseDto> {
@@ -196,7 +203,7 @@ export class TabService {
     tab: TabEntity,
     table: TableEntity,
     dto: AddTabOrderRequestDto,
-  ): Promise<TabResponseDto> {
+  ): Promise<{ tab: TabResponseDto; order: OrderResponseDto }> {
     if (dto.items.length === 0)
       throw new BadRequestException('Adicione pelo menos um produto');
 
@@ -294,7 +301,7 @@ export class TabService {
         },
       ],
     });
-    await manager.save(OrderEntity, order);
+    const savedOrder = await manager.save(OrderEntity, order);
 
     const updated = await manager.findOne(TabEntity, {
       where: { id: tab.id },
@@ -302,7 +309,10 @@ export class TabService {
       order: { orders: { createdAt: 'ASC' } },
     });
     if (!updated) throw new NotFoundException('Comanda não encontrada');
-    return this.toResponse(updated);
+    return {
+      tab: this.toResponse(updated),
+      order: toResponse(OrderResponseDto, savedOrder),
+    };
   }
 
   private toResponse(tab: TabEntity): TabResponseDto {

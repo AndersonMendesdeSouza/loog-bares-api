@@ -6,6 +6,7 @@ import { MessageGateway } from '../websocket/message.gateway';
 import { ChatEntity } from '../entities/chat.entity';
 import { ChatMessageEntity } from '../entities/chat-messages.entity';
 import { OrderEntity } from '../entities/order.entity';
+import { OrderType } from '../dtos/enums/table-enums';
 import { UserRole } from '../dtos/enums/user-role.enum';
 import { ChatMessageSenderType } from '../dtos/enums/chat-message-sender-type.enum';
 
@@ -17,7 +18,7 @@ describe('Notificação de mensagem salva', () => {
     save: jest.fn(),
     findOne: jest.fn(),
   };
-  const emit = jest.fn();
+  const emit = jest.fn<void, [string, unknown]>();
   const user = {
     id: 'customer-id',
     email: 'cliente@example.com',
@@ -34,7 +35,15 @@ describe('Notificação de mensagem salva', () => {
       {} as Repository<OrderEntity>,
       gateway,
     );
-    chatRepo.findOne.mockResolvedValue({ id: 'chat-id', orderId: 'order-id' });
+    chatRepo.findOne.mockResolvedValue({
+      id: 'chat-id',
+      orderId: 'order-id',
+      order: {
+        customerName: 'João Silva',
+        type: OrderType.DELIVERY,
+        mesaId: null,
+      },
+    });
     messageRepo.create.mockImplementation(
       (data: Partial<ChatMessageEntity>) => data,
     );
@@ -48,7 +57,7 @@ describe('Notificação de mensagem salva', () => {
     messageRepo.findOne.mockResolvedValue(null);
   });
 
-  it('autoriza, salva e só depois emite o ID do pedido e a mensagem confirmada', async () => {
+  it('autoriza, salva e só depois emite o ID do pedido, o nome do cliente e a mensagem confirmada', async () => {
     const response = await service.createMessage(
       { chatId: 'chat-id', text: '  Sem cebola  ' },
       user,
@@ -58,10 +67,14 @@ describe('Notificação de mensagem salva', () => {
     expect(chatRepo.findOne).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: 'chat-id', order: { userId: user.id } },
+        relations: { order: true, messages: { sender: true } },
       }),
     );
     expect(emit).toHaveBeenCalledWith('message.created', {
       orderId: 'order-id',
+      customerName: 'João Silva',
+      orderType: OrderType.DELIVERY,
+      mesaId: null,
       message: {
         id: 'message-id',
         chatId: 'chat-id',
@@ -73,6 +86,27 @@ describe('Notificação de mensagem salva', () => {
     expect(messageRepo.save.mock.invocationCallOrder[0]).toBeLessThan(
       emit.mock.invocationCallOrder[0],
     );
+  });
+
+  it('inclui o tipo do pedido e a mesa nas mensagens de atendimento', async () => {
+    chatRepo.findOne.mockResolvedValue({
+      id: 'chat-id',
+      orderId: 'order-id',
+      order: { customerName: 'Anderson', type: OrderType.DINE_IN, mesaId: '3' },
+    });
+    await service.createMessage(
+      { chatId: 'chat-id', text: 'Já estamos levando' },
+      { ...user, role: UserRole.ADMIN },
+    );
+    const payload = emit.mock.calls[0][1] as {
+      message: { senderType: ChatMessageSenderType };
+    };
+    expect(payload).toMatchObject({
+      customerName: 'Anderson',
+      orderType: OrderType.DINE_IN,
+      mesaId: '3',
+    });
+    expect(payload.message.senderType).toBe(ChatMessageSenderType.ADMIN);
   });
 
   it('não transmite mensagem de um chat ao qual o cliente não tem acesso', async () => {
